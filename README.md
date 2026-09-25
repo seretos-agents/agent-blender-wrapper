@@ -30,8 +30,8 @@ Poly Haven (free assets), Sketchfab, Hyper3D Rodin, and Hunyuan3D are toggled in
 ## Install
 
 ```
-/plugin marketplace add Seretos/agent-marketplace
-/plugin install agent-blender-wrapper@agent-marketplace
+/plugin marketplace add seretos-agents/modular-software-factory
+/plugin install agent-blender-wrapper@modular-software-factory
 ```
 
 ## Telemetry
