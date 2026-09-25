@@ -1,0 +1,22 @@
+{
+  "name": "agent-blender-wrapper",
+  "description": "Pairs the external BlenderMCP server with a skill so Claude can drive Blender - inspecting scenes, creating and modifying objects, applying materials, and sourcing assets - through structured MCP operations instead of blind Python scripting.",
+  "version": "0.0.3",
+  "author": {
+    "name": "Arne von Appen"
+  },
+  "dependencies": [],
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "blender-mcp==1.8.0",
+        "blender-mcp"
+      ],
+      "env": {
+        "BLENDER_MCP_DISABLE_TELEMETRY": "true"
+      }
+    }
+  }
+}
