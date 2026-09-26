@@ -61,3 +61,27 @@ jobs:
 
       - name: Compile-check all Python shipped under skills/
         run: python3 -m compileall -q skills
+
+  # release.yml's pre-flight step runs .github/scripts/prev-release-tag.sh
+  # on ubuntu-latest, but a release published from a Windows machine's
+  # local checkout, or an agent working in a Windows worktree, must get the
+  # same behaviour -- so this job (unlike `validate` above) runs the
+  # scripts' own test suite on both OSes.
+  release-scripts:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: jq is available
+        run: jq --version
+
+      - name: Run release-scripts tests
+        run: python -m unittest discover -s tests -v

@@ -113,23 +113,32 @@ class PrevReleaseTagTests(unittest.TestCase):
                 self.assertEqual(result.stdout.strip(), expected)
 
     def test_prev_tag_exclusions(self):
-        # Every noise tag below must be excluded, leaving only the one real
-        # predecessor: the tag being created itself, a src/* marker for the
-        # same version, a foreign plugin's tag, and an invalid (leading-zero)
-        # version.
+        # The true predecessor is v0.0.10. Every noise tag below is
+        # numerically HIGHER than v0.0.10 (but still strictly below the
+        # v0.0.20 target being created), so a naive "highest tag below
+        # target" scan -- one that skips only "<version> itself" and does
+        # no src/-prefix, plugin-name or strict-semver filtering -- would
+        # wrongly pick one of them instead of v0.0.10. Exclusion has to
+        # actually fire for this test to pass:
+        #   - v0.0.20 is the tag being created itself,
+        #   - src/agent-blender-wrapper--v0.0.15 is a src/* marker,
+        #   - other-plugin--v0.0.18 belongs to a different plugin,
+        #   - v0.0.019 has a leading-zero patch component (invalid semver;
+        #     a lenient parser would read it as 0.0.19).
         tags = [
-            "agent-blender-wrapper--v0.0.8",
-            "agent-blender-wrapper--v0.0.9",
-            "src/agent-blender-wrapper--v0.0.9",
-            "other-plugin--v0.0.9",
-            "agent-blender-wrapper--v01.0.0",
+            "agent-blender-wrapper--v0.0.5",
+            "agent-blender-wrapper--v0.0.10",
+            "agent-blender-wrapper--v0.0.20",
+            "src/agent-blender-wrapper--v0.0.15",
+            "other-plugin--v0.0.18",
+            "agent-blender-wrapper--v0.0.019",
         ]
-        result = run_prev_tag(tags, "agent-blender-wrapper", "0.0.9")
+        result = run_prev_tag(tags, "agent-blender-wrapper", "0.0.20")
         self.assertEqual(
             result.returncode, 0,
             msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
-        self.assertEqual(result.stdout.strip(), "agent-blender-wrapper--v0.0.8")
+        self.assertEqual(result.stdout.strip(), "agent-blender-wrapper--v0.0.10")
 
     def test_prev_tag_first_release(self):
         for tags in ([], ["other-plugin--v1.0.0"]):
@@ -199,13 +208,35 @@ class MarketplacePayloadTests(unittest.TestCase):
         self.assertEqual(cp["changelog"], changelog)
 
     def test_payload_omits_empty_changelog(self):
+        # Deliberately a different NAME/DESC/REPO/VERSION/TAG set than
+        # test_payload_hostile_changelog_roundtrip uses, and asserted on
+        # below: a marketplace-payload.sh that hard-codes the non-changelog
+        # fields (and reads only CHANGELOG from $ENV) would pass the
+        # roundtrip test but fail these equality checks, so this actually
+        # exercises field-derivation-from-env rather than relying on a
+        # single shared fixture.
         base_env_vars = {
-            "NAME": "agent-blender-wrapper",
-            "DESC": "Wraps BlenderMCP",
-            "REPO": "seretos-agents/agent-blender-wrapper",
-            "VERSION": "0.0.3",
-            "TAG": "agent-blender-wrapper--v0.0.3",
+            "NAME": "agent-serena-wrapper",
+            "DESC": "Wraps Serena's semantic code tools",
+            "REPO": "seretos-agents/agent-serena-wrapper",
+            "VERSION": "1.2.3",
+            "TAG": "agent-serena-wrapper--v1.2.3",
         }
+
+        def _assert_derived_fields(cp):
+            self.assertEqual(cp["name"], base_env_vars["NAME"])
+            self.assertEqual(cp["description"], base_env_vars["DESC"])
+            self.assertEqual(cp["repo"], base_env_vars["REPO"])
+            self.assertEqual(cp["version"], base_env_vars["VERSION"])
+            self.assertEqual(cp["ref"], base_env_vars["TAG"])
+            self.assertEqual(
+                cp["icon"],
+                f"https://raw.githubusercontent.com/{base_env_vars['REPO']}/{base_env_vars['TAG']}/assets/icon.png",
+            )
+            self.assertEqual(
+                cp["description_url"],
+                f"https://raw.githubusercontent.com/{base_env_vars['REPO']}/{base_env_vars['TAG']}/description.md",
+            )
 
         with self.subTest(case="empty string"):
             result = run_payload(dict(base_env_vars, CHANGELOG=""))
@@ -214,7 +245,9 @@ class MarketplacePayloadTests(unittest.TestCase):
                 msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
             )
             payload = json.loads(result.stdout)
-            self.assertNotIn("changelog", payload["client_payload"])
+            cp = payload["client_payload"]
+            _assert_derived_fields(cp)
+            self.assertNotIn("changelog", cp)
 
         with self.subTest(case="unset"):
             result = run_payload(dict(base_env_vars))
@@ -223,7 +256,9 @@ class MarketplacePayloadTests(unittest.TestCase):
                 msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
             )
             payload = json.loads(result.stdout)
-            self.assertNotIn("changelog", payload["client_payload"])
+            cp = payload["client_payload"]
+            _assert_derived_fields(cp)
+            self.assertNotIn("changelog", cp)
 
 
 if __name__ == "__main__":
