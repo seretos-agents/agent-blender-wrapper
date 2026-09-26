@@ -1,0 +1,27 @@
+{
+  "name": "agent-blender-wrapper",
+  "version": "0.0.4",
+  "description": "Pairs the external BlenderMCP server with a skill so Claude can drive Blender - inspecting scenes, creating and modifying objects, applying materials, and sourcing assets - through structured MCP operations instead of blind Python scripting.",
+  "author": {
+    "name": "Arne von Appen"
+  },
+  "repository": "https://github.com/seretos-agents/agent-blender-wrapper",
+  "skills": "./skills",
+  "interface": {
+    "displayName": "Agent Blender Wrapper",
+    "shortDescription": "Pairs the external BlenderMCP server with a skill so Claude can drive Blender - inspecting scenes, creating and modifying objects, applying materials, and sourcing assets - through structured MCP operations instead of blind Python scripting."
+  },
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "blender-mcp==1.8.0",
+        "blender-mcp"
+      ],
+      "env": {
+        "BLENDER_MCP_DISABLE_TELEMETRY": "true"
+      }
+    }
+  }
+}
