@@ -3,11 +3,16 @@ name: release
 # Manual release flow:
 #   1. Trigger via Actions tab -> "Run workflow" -> enter version (e.g. 0.0.1)
 #      or via CLI: gh workflow run release.yml -f version=0.0.1
-#   2. Workflow stamps version into plugin.json (in CI only), pushes an orphan
-#      release branch with install-ready files, creates the
+#   2. A pre-flight step validates the version, resolves the previous
+#      release tag, and fails fast (before any push/tag/release/dispatch)
+#      if src/<TAG> already exists or src/<PREV_TAG> is missing.
+#   3. Workflow stamps version into plugin.json (in CI only), pushes an
+#      orphan release branch with install-ready files, creates the
 #      agent-blender-wrapper--v{version} tag on that commit, and publishes a
-#      GitHub Release with the zip attached.
-#   3. The workflow then notifies agent-marketplace directly via
+#      GitHub Release with the zip attached and release notes scoped to
+#      commits since the previous release (see AGENTS.md's Contracts
+#      section for why, and for the one-time bootstrap this needs).
+#   4. The workflow then notifies agent-marketplace directly via
 #      MARKETPLACE_DISPATCH_TOKEN.
 on:
   workflow_dispatch:
@@ -25,31 +30,96 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Validate version is semver
-        shell: bash
-        run: |
-          V="${{ inputs.version }}"
-          if [[ ! "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Version '$V' is not valid semver (expected MAJOR.MINOR.PATCH[-PRERELEASE])."
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # required: prev-release-tag.sh reads local tags (git tag -l), and
+          # the src/<TAG> markers pre-flight checks below need real `main`
+          # history to compare against.
           fetch-depth: 0
 
-      - name: Fail if tag already exists
+      - name: Pre-flight (scoped-release-notes checks)
+        id: pre
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PLUGIN_NAME=$(jq -r '.name' .claude-plugin/plugin.json)
-          TAG="${PLUGIN_NAME}--v${{ inputs.version }}"
-          if gh api "repos/${{ github.repository }}/git/refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::error::Tag ${TAG} already exists. Delete it first or pick a new version."
+          set -euo pipefail
+
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::release.yml must run from refs/heads/main (got '${{ github.ref }}')."
             exit 1
           fi
+
+          PLUGIN_NAME=$(jq -r '.name' .claude-plugin/plugin.json)
+          V="${{ inputs.version }}"
+          TAG="${PLUGIN_NAME}--v${V}"
+
+          # prev-release-tag.sh validates $V against the strict SemVer 2.0.0
+          # grammar and exits 2 on failure (via `set -e`, that fails this
+          # step too) -- this folds in what used to be a separate "Validate
+          # version is semver" step.
+          PREV_TAG=$(git tag -l | bash .github/scripts/prev-release-tag.sh "$PLUGIN_NAME" "$V")
+
+          # Present/absent for a single, exact tag ref. Unlike the old
+          # git/refs/tags/<TAG> lookup this replaces (which prefix-matches,
+          # so it could not tell "TAG" apart from "TAG-something-else"),
+          # git/ref/tags/<TAG> (singular "ref") is an exact match. Anything
+          # other than a clean 200 or a 404 is treated as a hard error, not
+          # "absent" -- an ambiguous rate-limit/5xx response must never be
+          # allowed to look like a free tag.
+          ref_state() {
+            local ref="$1" err
+            err=$(mktemp)
+            if gh api "repos/${{ github.repository }}/git/ref/tags/${ref}" --silent 2>"$err"; then
+              rm -f "$err"
+              echo present
+              return 0
+            fi
+            if grep -q '(HTTP 404)' "$err"; then
+              rm -f "$err"
+              echo absent
+              return 0
+            fi
+            echo "::error::could not determine whether ref 'tags/${ref}' exists:" >&2
+            cat "$err" >&2
+            rm -f "$err"
+            return 1
+          }
+
+          for ref in "$TAG" "src/$TAG"; do
+            state=$(ref_state "$ref")
+            if [ "$state" = "present" ]; then
+              echo "::error::ref 'tags/${ref}' already exists. Delete it first or pick a new version."
+              exit 1
+            fi
+          done
+
+          if [ -n "$PREV_TAG" ]; then
+            state=$(ref_state "src/$PREV_TAG")
+            if [ "$state" != "present" ]; then
+              echo "::error::src/${PREV_TAG} is missing on GitHub, so scoped notes have nothing to diff against. Bootstrap it once with:"
+              echo "::error::  git tag src/${PREV_TAG} <head_sha of the release run that published ${PREV_TAG}>"
+              echo "::error::  git push origin src/${PREV_TAG}"
+              echo "::error::See AGENTS.md's Contracts section for where to find <head_sha>."
+              exit 1
+            fi
+          fi
+
+          # The orphan checkout's `git clean -fdx` (below) deletes
+          # .github/, so later steps that still need these scripts read
+          # them from a copy outside the worktree.
+          SCRIPTS="$RUNNER_TEMP/release-scripts"
+          rm -rf "$SCRIPTS"
+          mkdir -p "$SCRIPTS"
+          cp -a .github/scripts/. "$SCRIPTS/"
+
+          MAIN_SHA=$(git rev-parse HEAD)
+
+          echo "tag=${TAG}"           >> "$GITHUB_OUTPUT"
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+          echo "main_sha=${MAIN_SHA}" >> "$GITHUB_OUTPUT"
+          echo "scripts=${SCRIPTS}"   >> "$GITHUB_OUTPUT"
 
       - name: Stamp version into plugin manifests (in CI only)
         shell: bash
@@ -89,6 +159,21 @@ jobs:
 
           echo "stage=$STAGE"      >> "$GITHUB_OUTPUT"
           echo "zip=dist/$ZIPNAME" >> "$GITHUB_OUTPUT"
+
+      - name: Push src/<TAG> marker to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.pre.outputs.tag }}"
+          MAIN_SHA="${{ steps.pre.outputs.main_sha }}"
+          # Unconditional, no skip-if-exists guard: pre-flight checks 3-4
+          # already proved src/$TAG is absent, so there is nothing to skip.
+          # This marker is the only ref on either side of the release that
+          # carries real `main` history -- the orphan release commit
+          # created below has no merge-base with anything, which is exactly
+          # what left --generate-notes (and --notes-start-tag) with nothing
+          # to summarize.
+          git push origin "${MAIN_SHA}:refs/tags/src/${TAG}"
 
       - name: Push orphan release branch and capture commit
         id: rel
@@ -145,18 +230,41 @@ jobs:
           SHA=$(git rev-parse HEAD)
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Create tag and GitHub Release
+      - name: Build scoped release notes and create GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PLUGIN_NAME=$(jq -r '.name' .claude-plugin/plugin.json)
-          TAG="${PLUGIN_NAME}--v${{ inputs.version }}"
+          set -euo pipefail
+          TAG="${{ steps.pre.outputs.tag }}"
+          PREV_TAG="${{ steps.pre.outputs.prev_tag }}"
+          MAIN_SHA="${{ steps.pre.outputs.main_sha }}"
+
+          # Neither --generate-notes nor -f previous_tag_name=... against
+          # the orphan tag itself ($TAG, created below on a `release: vX.Y.Z`
+          # commit with no parent) can produce real notes: an orphan commit
+          # has no merge-base with anything, so GitHub finds no merged-PR
+          # history to summarize either way and falls back to a bare
+          # "Full Changelog" commits-compare link. --notes-start-tag is the
+          # fix that DOES work for a normal, non-orphan library repo -- and
+          # is therefore the more likely "simplification" someone reaches
+          # for here -- but it hits the exact same no-merge-base wall on
+          # this repo's orphan `release` branch, so it is not a fix either.
+          # The actual fix is to ask GitHub for notes on the src/<TAG>
+          # markers instead: those sit on `main`, where a real previous tag
+          # and real merged-PR history exist.
+          args=(-f "tag_name=src/${TAG}" -f "target_commitish=${MAIN_SHA}")
+          if [ -n "$PREV_TAG" ]; then
+            args+=(-f "previous_tag_name=src/${PREV_TAG}")
+          fi
+          gh api "repos/${{ github.repository }}/releases/generate-notes" "${args[@]}" --jq .body \
+            > "$RUNNER_TEMP/notes.md"
+
           gh release create "$TAG" \
             --repo "${{ github.repository }}" \
             --target "${{ steps.rel.outputs.sha }}" \
             --title "$TAG" \
-            --generate-notes \
+            --notes-file "$RUNNER_TEMP/notes.md" \
             ${{ contains(inputs.version, '-') && '--prerelease' || '' }} \
             "${{ steps.rel.outputs.asset }}"
 
@@ -166,29 +274,28 @@ jobs:
       - name: Dispatch to agent-marketplace
         shell: bash
         env:
-          GH_PAT:  ${{ secrets.MARKETPLACE_DISPATCH_TOKEN }}
-          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT:   ${{ secrets.MARKETPLACE_DISPATCH_TOKEN }}
+          VERSION:  ${{ inputs.version }}
         run: |
+          set -euo pipefail
+          TAG="${{ steps.pre.outputs.tag }}"
+          SCRIPTS="${{ steps.pre.outputs.scripts }}"
+
           DESC=$(jq -r '.description' .claude-plugin/plugin.json)
           NAME=$(jq -r '.name'        .claude-plugin/plugin.json)
-          TAG="${NAME}--v${VERSION}"
-          PAYLOAD=$(cat <<EOF
-          {
-            "event_type": "plugin-release",
-            "client_payload": {
-              "name":        "${NAME}",
-              "description": "${DESC}",
-              "repo":        "${{ github.repository }}",
-              "category":    "skill",
-              "version":     "${VERSION}",
-              "ref":         "${TAG}",
-              "icon":        "https://raw.githubusercontent.com/${{ github.repository }}/${TAG}/assets/icon.png",
-              "description_url": "https://raw.githubusercontent.com/${{ github.repository }}/${TAG}/description.md",
-              "tags":        ["3d", "creative"]
-            }
-          }
-          EOF
-          )
+
+          # gh release view --json body --jq .body prints nothing at all
+          # (not even a blank line) for an empty release body, same as it
+          # would for a command that produced no output; the "&& printf x"
+          # sentinel plus stripping that trailing "x" below is what tells
+          # the two apart.
+          CHANGELOG=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body --jq .body && printf x)
+          CHANGELOG="${CHANGELOG%x}"
+          CHANGELOG="${CHANGELOG%$'\n'}"
+
+          PAYLOAD=$(NAME="$NAME" DESC="$DESC" REPO="${{ github.repository }}" VERSION="$VERSION" TAG="$TAG" CHANGELOG="$CHANGELOG" \
+            bash "$SCRIPTS/marketplace-payload.sh")
 
           # Staging first (lands straight to main, no review), then the
           # curated marketplace (opens a review PR) -- same payload, two
