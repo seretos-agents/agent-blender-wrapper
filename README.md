@@ -19,13 +19,29 @@ The MCP server is only a bridge — the actual work happens inside a running Ble
 2. Download `addon.py` from https://github.com/ahujasid/blender-mcp.
 3. Blender → `Edit > Preferences > Add-ons > Install...` → select `addon.py`.
 4. Enable **Interface: Blender MCP**.
-5. In the 3D View, press `N` to open the sidebar → **BlenderMCP** tab → click **Connect to Claude**.
+5. In the 3D View, press `N` to open the sidebar → **BlenderMCP** tab → click **Connect to Claude** — unless you start Blender with the bundled launcher (see [Start Blender automatically](#start-blender-automatically)).
 
 Step 5 is per Blender session. The addon listens on `localhost:9876`; if you change the port there, set `BLENDER_HOST` / `BLENDER_PORT` accordingly.
 
 ### 3. Optional integrations
 
 Poly Haven (free assets), Sketchfab, Hyper3D Rodin, and Hunyuan3D are toggled in the same sidebar panel. Sketchfab and the AI generators need an API key; Poly Haven does not. The skill checks each integration's status before relying on it.
+
+## Start Blender automatically
+
+The plugin ships a stdlib-only launcher that starts Blender with the addon's socket already listening, so "Connect to Claude" is not needed. The addon from step 2 must still be installed (the launcher enables it for the session only and saves nothing to your preferences).
+
+```
+python <plugin>/skills/blender-wrapper/scripts/launch_blender.py
+# or: uv run --no-project python <plugin>/skills/blender-wrapper/scripts/launch_blender.py
+```
+
+- `--blender PATH` or env `BLENDER_PATH`: the Blender executable. Otherwise `blender` on `PATH`, then the usual install locations for your OS.
+- `--timeout SECS`: how long to wait for the port to open (default 60).
+- `--log PATH`: where Blender's output goes (default `blender-mcp-launch.log` in the temp directory).
+- Env `BLENDER_PORT` (default 9876) and `BLENDER_HOST` (default `localhost`) pick the socket. If something already listens there, nothing is started.
+
+Exit codes: `0` listening (started now, or already was); `1` Blender failed to start, exited early, or the port did not open in time; `2` Blender executable not found; `3` Blender started but the BlenderMCP addon is missing or failed to start (the log line starts with `BLENDERMCP_AUTOSTART_ERROR:`).
 
 ## Install
 
@@ -48,7 +64,7 @@ See `skills/blender-game-export/SKILL.md` for getting a finished asset out of Bl
 
 ## Troubleshooting
 
-**Every tool errors with a connection failure.** Blender isn't running, the addon isn't enabled, or "Connect to Claude" wasn't clicked this session. Retrying won't help — fix the setup.
+**Every tool errors with a connection failure.** Blender isn't running, the addon isn't enabled, or "Connect to Claude" wasn't clicked this session (unless Blender was started via the launcher, which makes that click unnecessary — then check the launcher's exit code and log). Retrying won't help — fix the setup.
 
 **The very first command after connecting fails, the next one works.** Known upstream behaviour; the socket isn't ready on the first call. A single retry is expected.
 

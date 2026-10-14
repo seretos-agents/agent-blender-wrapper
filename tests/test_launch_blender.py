@@ -125,6 +125,10 @@ class LaunchBlenderTests(LauncherTestCase):
         log = self.log.read_text()
         self.assertIn("--python", log)
         self.assertIn("blender_mcp_autostart.py", log)
+        after = log.split("--python", 1)[1].split("'")
+        path = next(p for p in after if "blender_mcp_autostart.py" in p)
+        self.assertTrue(os.path.isabs(path), path)
+        self.assertTrue(os.path.exists(path), path)
 
     def test_blender_path_env_used(self):
         proc, _, out = self.run_launcher(
@@ -175,16 +179,16 @@ class LaunchBlenderTests(LauncherTestCase):
 class FakeBlender:
     """Fake bpy / addon_utils / addon modules for exercising the autostart."""
 
-    def __init__(self, loaded=False, enable_result="module"):
+    def __init__(self, loaded=False, enable_result="module", splash=True, dirty=False):
         self.timers = []
         self.enable_calls = []
         self.servers = []
-        self.prefs = types.SimpleNamespace(is_dirty=False)
+        self.prefs = types.SimpleNamespace(is_dirty=dirty)
         fake = self
 
         class View:
             def __init__(self):
-                self._splash = True
+                self._splash = splash
 
             @property
             def show_splash(self):
@@ -265,6 +269,7 @@ class AutostartTests(unittest.TestCase):
         self.assertTrue(fake.view.show_splash)
         self.assertFalse(fake.prefs.is_dirty)
         self.assertEqual(len(fake.enable_calls), 1)
+        self.assertEqual(fake.enable_calls[0][0], "addon")
         self.assertIs(fake.enable_calls[0][2].get("default_set"), False)
         self.assertEqual(len(fake.servers), 1)
         self.assertEqual(fake.servers[0].port, 9911)
@@ -272,6 +277,13 @@ class AutostartTests(unittest.TestCase):
         self.assertEqual(fake.scene.blendermcp_port, 9911)
         self.assertTrue(fake.scene.blendermcp_server_running)
         self.assertIsNone(result)
+
+    def test_prefs_restored_when_originally_off_and_dirty(self):
+        fake = FakeBlender(splash=False, dirty=True)
+        _, during, _, _ = self.run_autostart(fake, port="9923")
+        self.assertFalse(during)
+        self.assertFalse(fake.view.show_splash)
+        self.assertTrue(fake.prefs.is_dirty)
 
     def test_addon_import_failure_prints_marker(self):
         fake = FakeBlender(enable_result="error")

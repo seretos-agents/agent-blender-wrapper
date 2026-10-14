@@ -10,6 +10,8 @@ visually verifying the result — instead of writing Python into the dark.
 - **Zero-setup MCP server** — BlenderMCP is declared inline in the plugin
   manifest and launched via `uvx` on install. No manual server, no
   `pip install`, no config step.
+- **One-command Blender start** — a bundled launcher starts Blender with the
+  addon's socket already listening, so there's no sidebar click.
 - **Scene-aware, not guess-driven** — the skill's core loop is inspect →
   change → screenshot. The agent reads actual object names and transforms
   before touching anything, and verifies the viewport afterwards.
@@ -35,7 +37,8 @@ visually verifying the result — instead of writing Python into the dark.
 - **Blender 3.0+** running with a GUI.
 - The **BlenderMCP addon** (`addon.py` from
   https://github.com/ahujasid/blender-mcp) installed in Blender and started per
-  session via "Connect to Claude" in the 3D View sidebar.
+  session via "Connect to Claude" in the 3D View sidebar, or start Blender
+  with the bundled launcher.
 - `uv` on the host machine; `uvx` launches the server on demand. See
   https://docs.astral.sh/uv/getting-started/installation/
 - Optional: API keys in the addon panel for Sketchfab, Hyper3D Rodin, and
