@@ -3,17 +3,19 @@ name: blender-wrapper
 description: >
   Drive a running Blender session through the BlenderMCP server's structured
   tools instead of guessing at scene state or writing blind Python. Use when
-  inspecting a Blender scene or a specific object, creating/modifying/deleting
-  3D objects, applying or creating materials, taking a viewport screenshot to
-  verify a result, downloading assets from PolyHaven or Sketchfab, or
-  generating 3D models with Hyper3D Rodin or Hunyuan3D.
+  inspecting a Blender scene or object, creating/modifying/deleting 3D
+  objects, applying materials, taking a viewport screenshot to verify a
+  result, downloading PolyHaven or Sketchfab assets, or generating models
+  with Hyper3D Rodin or Hunyuan3D. Also use, before telling the user
+  anything, when a Blender tool fails to connect ("Could not connect to
+  Blender") or after launch_blender.py has run: it gives the launcher and the
+  check_prerequisites.py diagnosis to run.
   Also use for requests like: "what's in the Blender scene", "add a cube /
-  sphere / light / camera", "move / scale / rotate object X", "make X red /
-  metallic", "apply a wood texture", "show me the viewport", "render what it
-  looks like now", "download an HDRI", "find a chair model", "generate a 3D
-  model of X", "was ist in der Blender-Szene", "füge einen Würfel hinzu",
-  "verschiebe / skaliere / drehe Objekt X", "mach X rot", "zeig mir das
-  Viewport", "lade ein HDRI", "generiere ein 3D-Modell von X".
+  sphere / light", "move / scale / rotate object X", "make X red", "apply a
+  wood texture", "show me the viewport", "download an HDRI", "find a chair
+  model", "generate a 3D model of X", "was ist in der Blender-Szene", "füge
+  einen Würfel hinzu", "verschiebe / drehe Objekt X", "lade ein HDRI",
+  "generiere ein 3D-Modell von X".
 ---
 
 # blender-wrapper
@@ -54,8 +56,9 @@ Consequences worth internalising:
 
 - **There is no offline mode.** If nothing is listening on the addon's port,
   every tool fails. That is a setup problem, not a tool-usage problem — don't
-  retry the tool blindly; bring the session up with the launcher as described
-  in "When a tool can't reach Blender".
+  retry the tool blindly. Bring the session up with the launcher, and diagnose
+  with `check_prerequisites.py` before you involve the user, as described in
+  "When a tool can't reach Blender".
 - **The scene is shared, mutable state.** The user may have moved things
   between two of your tool calls. Re-read scene state rather than trusting a
   stale answer from earlier in the conversation.
@@ -137,7 +140,9 @@ cover *reading* the scene and *sourcing* assets.
 Every other recipe depends on this one. When a BlenderMCP tool call fails with
 a connection error — "Could not connect to Blender", connection refused, nothing
 listening on `BLENDER_HOST`:`BLENDER_PORT` (default `localhost:9876`) — start
-Blender yourself. Do not ask the user first.
+Blender yourself. Do not ask the user first. The order is fixed: launcher
+(step 1), then retry on exit `0`. If the user has to be told anything, run
+`check_prerequisites.py` (step 3) first and tell them what it found (step 4).
 
 1. Run the launcher from a shell. Its path is relative to this skill's own base
    directory:
@@ -158,12 +163,12 @@ Blender yourself. Do not ask the user first.
    | Exit | Meaning | Next action |
    |---|---|---|
    | `0` | BlenderMCP is listening (started now, or already was) | Retry the failed tool call. |
-   | `2` | Blender executable not found | Keep the paths the launcher says it tried. Run the check (step 3), then tell the user (step 4). |
-   | `3` | Blender started, but the BlenderMCP addon is missing or failed to start | Keep the `BLENDERMCP_AUTOSTART_ERROR:` line the launcher printed. Run the check (step 3), then tell the user (step 4). |
-   | `1` | Blender failed to start, exited early, or the port did not open in time | Keep the log path the launcher printed. Run the check (step 3), then tell the user (step 4). Do not relaunch. |
+   | `2` | Blender executable not found | Keep the paths the launcher says it tried. Run `check_prerequisites.py` (step 3), then tell the user (step 4). |
+   | `3` | Blender started, but the BlenderMCP addon is missing or failed to start | Keep the `BLENDERMCP_AUTOSTART_ERROR:` line the launcher printed. Run `check_prerequisites.py` (step 3), then tell the user (step 4). |
+   | `1` | Blender failed to start, exited early, or the port did not open in time | Keep the log path the launcher printed. Run `check_prerequisites.py` (step 3), then tell the user (step 4). Do not relaunch. |
 
-3. Before you tell the user anything, run the prerequisite check yourself — do
-   not hand the command to the user instead:
+3. Run the prerequisite check yourself, now, before you tell the user anything
+   and before any other investigation:
 
    ```sh
    python <this skill's directory>/scripts/check_prerequisites.py
@@ -175,6 +180,14 @@ Blender yourself. Do not ask the user first.
    to read the add-ons enabled in the user's preferences, and the launcher
    enables the addon for its session only, so that state decides nothing here.
    The check prints one JSON object; read its fields and ignore its exit code.
+
+   This check is the diagnosis. Do not replace it with your own process
+   listings, port probes (`Get-Process`, `Test-NetConnection`,
+   `Get-NetTCPConnection`, `netstat`, `lsof`), searches of add-on directories
+   or a read of the launcher log. It already reports which of Blender, the
+   addon and the socket is missing, using the paths and port the launcher
+   uses. Do not hand the command to the user either: run it and act on its
+   output.
 4. Tell the user what the report shows, together with what you kept from the
    launcher:
 
@@ -200,7 +213,10 @@ Blender yourself. Do not ask the user first.
 
 Run the launcher at most once per failure. If the tool call still fails after
 exit `0` (including "already listening"), allow the single retry described
-under Pitfalls; if that fails too, do not relaunch — run the check (step 3) and
+under Pitfalls. If that retry fails too, do not relaunch and do not probe the
+port yourself. A launcher "already listening" result does not prove that
+BlenderMCP answers. Run
+`python <this skill's directory>/scripts/check_prerequisites.py` (step 3), then
 report as in step 4.
 
 ### Any scene change at all
