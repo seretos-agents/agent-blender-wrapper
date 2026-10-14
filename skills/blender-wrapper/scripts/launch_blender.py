@@ -118,6 +118,9 @@ def main(argv=None):
     env = dict(os.environ, BLENDER_PORT=str(port))
     kwargs = {}
     if sys.platform == "win32":
+        # Not DETACHED_PROCESS: it lost the child's stdout/stderr, so the
+        # log file stayed empty. CREATE_NO_WINDOW keeps redirection working
+        # and the new process group survives this launcher exiting.
         kwargs["creationflags"] = (subprocess.CREATE_NO_WINDOW
                                    | subprocess.CREATE_NEW_PROCESS_GROUP)
     else:
