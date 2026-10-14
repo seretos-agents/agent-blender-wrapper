@@ -40,8 +40,11 @@ non-trivial change should be confirmed with `get_viewport_screenshot`.
 Three processes are involved, and all three must be up:
 
 1. **Blender** itself, running with a GUI, with the **BlenderMCP addon**
-   installed *and* "Connect to Claude" clicked in the 3D View sidebar (`N` →
-   BlenderMCP tab). The addon opens a TCP server on `localhost:9876`.
+   installed. The addon's TCP server listens on `localhost:9876`
+   (`BLENDER_HOST` / `BLENDER_PORT` override it) once it is started — either by
+   this skill's launcher script (see "When a tool can't reach Blender") or by
+   the user clicking "Connect to Claude" in the 3D View sidebar (`N` →
+   BlenderMCP tab).
 2. **The BlenderMCP server**, launched automatically by this plugin via `uvx`.
    It is a thin bridge: it accepts MCP tool calls and forwards them over that
    TCP socket.
@@ -49,9 +52,10 @@ Three processes are involved, and all three must be up:
 
 Consequences worth internalising:
 
-- **There is no offline mode.** If Blender isn't running with the addon
-  connected, every tool fails. That is a setup problem, not a tool-usage
-  problem — tell the user to start Blender and click "Connect", don't retry.
+- **There is no offline mode.** If nothing is listening on the addon's port,
+  every tool fails. That is a setup problem, not a tool-usage problem — don't
+  retry the tool blindly; bring the session up with the launcher as described
+  in "When a tool can't reach Blender".
 - **The scene is shared, mutable state.** The user may have moved things
   between two of your tool calls. Re-read scene state rather than trusting a
   stale answer from earlier in the conversation.
@@ -128,6 +132,40 @@ cover *reading* the scene and *sourcing* assets.
 
 ## Patterns and recipes
 
+### When a tool can't reach Blender
+
+Every other recipe depends on this one. When a BlenderMCP tool call fails with
+a connection error — "Could not connect to Blender", connection refused, nothing
+listening on `BLENDER_HOST`:`BLENDER_PORT` (default `localhost:9876`) — start
+Blender yourself. Do not ask the user first.
+
+1. Run the launcher from a shell. Its path is relative to this skill's own base
+   directory:
+
+   ```sh
+   python <this skill's directory>/scripts/launch_blender.py
+   ```
+
+   If `python` is not on `PATH`, run
+   `uv run --no-project python <this skill's directory>/scripts/launch_blender.py`
+   instead. The launcher waits up to 60 seconds for the port (`--timeout`
+   changes that), so give the shell call a timeout longer than that. It honours
+   `BLENDER_PORT`, `BLENDER_HOST` and `BLENDER_PATH`, writes Blender's output
+   to a log file (`--log` changes where), and starts nothing if the port is
+   already listening.
+2. Act on its exit code:
+
+   | Exit | Meaning | Next action |
+   |---|---|---|
+   | `0` | BlenderMCP is listening (started now, or already was) | Retry the failed tool call. |
+   | `2` | Blender executable not found | Tell the user the launcher's message (it names the paths it tried) and ask where Blender is installed. Rerun once with `--blender <path>` using their answer. |
+   | `3` | Blender started, but the BlenderMCP addon is missing or failed to start | Pass on the `BLENDERMCP_AUTOSTART_ERROR:` line the launcher printed and ask the user to install and enable the addon (`addon.py`, Preferences → Add-ons). |
+   | `1` | Blender failed to start, exited early, or the port did not open in time | Relay the launcher's message, including the log path it printed, to the user. Do not relaunch. |
+
+Run the launcher at most once per failure. If the tool call still fails after
+exit `0` (including "already listening"), allow the single retry described
+under Pitfalls, then report the failure to the user instead of relaunching.
+
 ### Any scene change at all
 
 1. `get_scene_info` — establish what exists and what the objects are actually called.
@@ -194,9 +232,9 @@ actually needed.
   scene half-modified with no clean rollback. Break complex work into several
   small `execute_blender_code` calls, screenshotting between them.
 - **The first command after connecting often fails.** The addon's socket may not
-  be ready on the very first call; a single retry normally succeeds. Persistent
-  failures mean Blender is closed, the addon is disabled, or "Connect to Claude"
-  was never clicked — a setup issue, not something to retry around.
+  be ready on the very first call; a single retry normally succeeds. A failure
+  that persists is a setup issue, not something to retry around — handle it
+  with "When a tool can't reach Blender" (the launcher, then its exit code).
 - **Long operations hit a 180-second socket timeout** and surface as an error
   suggesting you simplify the request. Split the work rather than resending the
   same heavy call.
@@ -207,7 +245,7 @@ actually needed.
 - **Never guess object names.** Blender auto-suffixes duplicates (`Cube.001`)
   and imports name objects after their source file. Always re-read
   `get_scene_info` after any import or creation.
-- **Don't start the server manually.** `uvx blender-mcp` in a terminal is not
+- **Don't start the BlenderMCP server manually.** `uvx blender-mcp` in a terminal is not
   how this works — the host launches and owns the server process. Two instances
   fighting over the same socket is a common self-inflicted failure.
 - **Downloaded PolyHaven textures aren't applied automatically.**
