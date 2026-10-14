@@ -79,7 +79,7 @@ See `skills/blender-game-export/SKILL.md` for getting a finished asset out of Bl
 
 ## Troubleshooting
 
-**Every tool errors with a connection failure.** Blender isn't running, the addon isn't enabled, or "Connect to Claude" wasn't clicked this session (unless Blender was started via the launcher, which makes that click unnecessary — then check the launcher's exit code and log). Retrying won't help — fix the setup.
+**Every tool errors with a connection failure.** Blender isn't running, the addon isn't enabled, or "Connect to Claude" wasn't clicked this session (unless Blender was started via the launcher, which makes that click unnecessary — then check the launcher's exit code and log). Run `check_prerequisites.py` (see [Check prerequisites](#check-prerequisites)) to see which piece is missing. Retrying won't help — fix the setup.
 
 **The very first command after connecting fails, the next one works.** Known upstream behaviour; the socket isn't ready on the first call. A single retry is expected.
 

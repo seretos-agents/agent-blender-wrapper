@@ -158,13 +158,50 @@ Blender yourself. Do not ask the user first.
    | Exit | Meaning | Next action |
    |---|---|---|
    | `0` | BlenderMCP is listening (started now, or already was) | Retry the failed tool call. |
-   | `2` | Blender executable not found | Tell the user the launcher's message (it names the paths it tried) and ask where Blender is installed. Rerun once with `--blender <path>` using their answer. |
-   | `3` | Blender started, but the BlenderMCP addon is missing or failed to start | Pass on the `BLENDERMCP_AUTOSTART_ERROR:` line the launcher printed and ask the user to install and enable the addon (`addon.py`, Preferences → Add-ons). |
-   | `1` | Blender failed to start, exited early, or the port did not open in time | Relay the launcher's message, including the log path it printed, to the user. Do not relaunch. |
+   | `2` | Blender executable not found | Keep the paths the launcher says it tried. Run the check (step 3), then tell the user (step 4). |
+   | `3` | Blender started, but the BlenderMCP addon is missing or failed to start | Keep the `BLENDERMCP_AUTOSTART_ERROR:` line the launcher printed. Run the check (step 3), then tell the user (step 4). |
+   | `1` | Blender failed to start, exited early, or the port did not open in time | Keep the log path the launcher printed. Run the check (step 3), then tell the user (step 4). Do not relaunch. |
+
+3. Before you tell the user anything, run the prerequisite check yourself — do
+   not hand the command to the user instead:
+
+   ```sh
+   python <this skill's directory>/scripts/check_prerequisites.py
+   ```
+
+   Use the same `uv run --no-project python …` fallback as in step 1, and add
+   `--blender <path>` if you already know where Blender is. Do not pass
+   `--deep`: it starts another Blender in the background for up to 120 seconds
+   to read the add-ons enabled in the user's preferences, and the launcher
+   enables the addon for its session only, so that state decides nothing here.
+   The check prints one JSON object; read its fields and ignore its exit code.
+4. Tell the user what the report shows, together with what you kept from the
+   launcher:
+
+   - `blender.path` is `null`: Blender was not found. List `blender.tried`, ask
+     where Blender is installed, then rerun the launcher once with
+     `--blender <path>`.
+   - `addon.installed` is `false`: ask the user to install `addon.py` for
+     Blender `blender.version` (Preferences → Add-ons) and name
+     `addon.searched` as the directory that was looked in (if `blender.version`
+     is `null`, nothing was searched — say so). Detection only looks for the
+     file name; if the user says the addon is installed, trust the launcher's
+     `BLENDERMCP_AUTOSTART_ERROR:` line over the report.
+   - `addon.installed` is `true` and the launcher exited `3`: the addon file is
+     there but did not load or start. Relay the `BLENDERMCP_AUTOSTART_ERROR:`
+     line and the launcher's log path.
+   - `addon.enabled` is `null`: it was not checked. Never report it as
+     disabled.
+   - `socket.listening` is `true` while tools still fail: something that is not
+     BlenderMCP is answering on `socket.host`:`socket.port`, or the addon and
+     the server use different ports. Name that `host:port`.
+   - `extensions.mpfb.*` is never the cause of a connection failure. Mention
+     MPFB only if the user's own task needs it.
 
 Run the launcher at most once per failure. If the tool call still fails after
 exit `0` (including "already listening"), allow the single retry described
-under Pitfalls, then report the failure to the user instead of relaunching.
+under Pitfalls; if that fails too, do not relaunch — run the check (step 3) and
+report as in step 4.
 
 ### Any scene change at all
 
@@ -234,7 +271,8 @@ actually needed.
 - **The first command after connecting often fails.** The addon's socket may not
   be ready on the very first call; a single retry normally succeeds. A failure
   that persists is a setup issue, not something to retry around — handle it
-  with "When a tool can't reach Blender" (the launcher, then its exit code).
+  with "When a tool can't reach Blender" (the launcher, then the check before
+  you involve the user).
 - **Long operations hit a 180-second socket timeout** and surface as an error
   suggesting you simplify the request. Split the work rather than resending the
   same heavy call.
