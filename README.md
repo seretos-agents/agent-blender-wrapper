@@ -43,6 +43,21 @@ python <plugin>/skills/blender-wrapper/scripts/launch_blender.py
 
 Exit codes: `0` listening (started now, or already was); `1` Blender failed to start, exited early, or the port did not open in time; `2` Blender executable not found; `3` Blender started but the BlenderMCP addon is missing or failed to start (the log line starts with `BLENDERMCP_AUTOSTART_ERROR:`).
 
+## Check prerequisites
+
+A stdlib-only check reports what is missing (Blender, the BlenderMCP addon, the MPFB extension, the socket) as one JSON object. It only detects; it installs and changes nothing.
+
+```
+python <plugin>/skills/blender-wrapper/scripts/check_prerequisites.py [--blender PATH] [--deep]
+```
+
+- Blender is found the same way as for the launcher (`--blender`, `BLENDER_PATH`, `PATH`, usual install locations). `blender.tried` lists what was searched.
+- The addon and MPFB are looked up in your Blender user config for the detected `major.minor` version (`addon.searched` shows the directory).
+- `enabled` is `null` by default. `--deep` starts Blender once in the background (slow) and fills it in.
+- `socket.listening` reflects `BLENDER_HOST` / `BLENDER_PORT`.
+
+Exit codes: `0` Blender and the addon found (and enabled under `--deep`); `1` the `--deep` probe failed; `2` Blender not found; `3` addon missing (or disabled under `--deep`). A closed socket or missing MPFB does not change the exit code.
+
 ## Install
 
 ```

@@ -26,7 +26,7 @@ import os, sys
 
 args = sys.argv[1:]
 if "--version" in args:
-    print("Blender 5.0.1")
+    print("Blender " + os.environ.get("STANDIN_VERSION", "5.0.1"))
     print("\\tbuild date: 2025-10-01")
 elif "--python-expr" in args:
     addons = os.environ.get("STANDIN_ADDONS")
@@ -86,12 +86,17 @@ class CheckTestCase(unittest.TestCase):
 
     def run_check(self, *args, env_extra=None, timeout=120):
         env = dict(os.environ)
-        for k in ("BLENDER_HOST", "BLENDER_PATH", "STANDIN_ADDONS"):
+        for k in ("BLENDER_HOST", "BLENDER_PATH", "STANDIN_ADDONS", "STANDIN_VERSION"):
             env.pop(k, None)
         env.update(APPDATA=str(self.appdata), XDG_CONFIG_HOME=str(self.xdg),
                    HOME=str(self.home), USERPROFILE=str(self.home),
                    BLENDER_PORT=str(self.port))
-        env.update(env_extra or {})
+        for k, v in (env_extra or {}).items():
+            # os.environ copies are upper-cased on Windows; drop any
+            # differently-cased twin so the override is the one the child sees.
+            for existing in [e for e in env if e.upper() == k.upper()]:
+                del env[existing]
+            env[k] = v
         proc = subprocess.run([sys.executable, str(CHECK), *args], env=env,
                               capture_output=True, text=True, timeout=timeout)
         out = proc.stdout + proc.stderr
@@ -152,6 +157,15 @@ class AddonMissingTests(CheckTestCase):
                          self.config_root() / "5.0" / "scripts" / "addons")
         self.assertEqual(rep["blender"]["version"], "5.0.1")
 
+    def test_version_selects_config_dir(self):
+        self.install(version="4.2")
+        proc, rep, out = self.run_check("--blender", str(self.blender),
+                                        env_extra={"STANDIN_VERSION": "4.2.3"})
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertEqual(rep["blender"]["version"], "4.2.3")
+        self.assertTrue(rep["addon"]["installed"])
+        self.assertTrue(rep["extensions"]["mpfb"]["installed"])
+
     def test_addon_only_in_other_version_dir_is_missing(self):
         self.install(version="4.2")
         proc, rep, out = self.run_check("--blender", str(self.blender))
@@ -168,7 +182,16 @@ class NoBlenderTests(CheckTestCase):
         return {"PATH": str(empty), "ProgramFiles": str(pf)}
 
     def test_no_blender_reports_tried_exit_2(self):
-        if sys.platform != "win32":
+        if sys.platform == "win32":
+            import glob
+            env = self.isolated_env()
+            seen = subprocess.run(
+                [sys.executable, "-c", "import os;print(os.environ['ProgramFiles'])"],
+                env={**os.environ, **env}, capture_output=True, text=True).stdout.strip()
+            real = glob.glob(os.path.join(seen, "Blender Foundation", "Blender *", "blender.exe"))
+            if seen != env["ProgramFiles"] and real:
+                self.skipTest("ProgramFiles override is not honoured here and a real Blender is installed")
+        else:
             defaults = ["/Applications/Blender.app/Contents/MacOS/Blender",
                         "/usr/bin/blender", "/snap/bin/blender"]
             if any(os.path.isfile(p) for p in defaults):

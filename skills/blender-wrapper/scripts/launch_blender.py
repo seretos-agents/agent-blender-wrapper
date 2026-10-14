@@ -51,25 +51,42 @@ def candidate_paths():
         glob.glob("/opt/blender*/blender"), reverse=True)
 
 
-def resolve_blender(explicit):
-    """Return (path, None) or (None, error_message)."""
+def search_blender(explicit):
+    """Return (path, tried): path is None when nothing was found.
+
+    Order: explicit, BLENDER_PATH, PATH, candidate_paths(). An explicit or
+    BLENDER_PATH value that does not exist is final (no fall-through).
+    """
     if explicit:
         if os.path.isfile(explicit):
-            return explicit, None
-        return None, f"Blender not found at {explicit}"
+            return explicit, []
+        return None, [explicit]
     env = os.environ.get("BLENDER_PATH")
     if env:
         if os.path.isfile(env):
-            return env, None
-        return None, f"Blender not found at {env} (from BLENDER_PATH)"
+            return env, []
+        return None, [f"{env} (from BLENDER_PATH)"]
     which = shutil.which("blender")
     if which:
-        return which, None
+        return which, []
     tried = ["PATH (blender)"]
     for cand in candidate_paths():
         if os.path.isfile(cand):
-            return cand, None
+            return cand, tried
         tried.append(cand)
+    return None, tried
+
+
+def resolve_blender(explicit):
+    """Return (path, None) or (None, error_message)."""
+    path, tried = search_blender(explicit)
+    if path:
+        return path, None
+    if explicit:
+        return None, f"Blender not found at {explicit}"
+    env = os.environ.get("BLENDER_PATH")
+    if env:
+        return None, f"Blender not found at {env} (from BLENDER_PATH)"
     return None, ("Blender not found. Tried: " + "; ".join(tried)
                   + ". Pass --blender PATH or set BLENDER_PATH.")
 
